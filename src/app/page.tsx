@@ -1,65 +1,332 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Header } from "@/components/Header";
+import { HedgeOverview } from "@/components/HedgeOverview";
+import { LegCard } from "@/components/LegCard";
+import { SpreadChart } from "@/components/SpreadChart";
+import { HedgeControls } from "@/components/HedgeControls";
+import { ActiveAlerts, type AlertItem } from "@/components/ActiveAlerts";
+import { useApi } from "@/lib/use-api";
+import type { PositionsApiResponse } from "@/lib/api-types";
+
+function formatUsdAmount(value: string | null | undefined): string {
+  if (!value) return "—";
+  const num = parseFloat(value);
+  return `$${num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function signedUsd(value: string | null | undefined): string {
+  if (!value) return "—";
+  const num = parseFloat(value);
+  const prefix = num >= 0 ? "+" : "-";
+  return `${prefix}$${Math.abs(num).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatPrice(value: string | null | undefined): string {
+  if (!value) return "—";
+  const num = parseFloat(value);
+  return num.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 4,
+    maximumFractionDigits: Math.abs(num) >= 1 ? 4 : 6,
+  });
+}
+
+function formatBaseAmount(
+  value: string | null | undefined,
+  asset: string | null | undefined
+): string | null {
+  if (!value || !asset) return null;
+  const num = parseFloat(value);
+  return `${num.toLocaleString("en-US", {
+    minimumFractionDigits: num >= 100 ? 2 : 4,
+    maximumFractionDigits: 8,
+  })} ${asset}`;
+}
+
+function formatFundingRate(
+  rate: string | null | undefined,
+  intervalHours: number | null | undefined
+): string {
+  if (!rate) return "—";
+  const num = parseFloat(rate) * 100;
+  const intervalLabel = intervalHours ? ` / fd ${intervalHours}h` : "";
+  return `${num >= 0 ? "+" : ""}${num.toFixed(4)}%${intervalLabel}`;
+}
+
+function PositionsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { data, error, loading, refreshing, refetch } =
+    useApi<PositionsApiResponse>("/api/positions", 30_000);
+
+  const selectedStrategyId = searchParams.get("strategy");
+  const strategyGroups = data?.strategyGroups ?? [];
+  const group =
+    strategyGroups.find((item) => item.strategyGroupId === selectedStrategyId) ??
+    strategyGroups[0] ??
+    null;
+  const metrics =
+    data?.dashboardMetrics.find((item) => item.strategyGroupId === group?.strategyGroupId) ??
+    null;
+  const rewardBaseLabel = formatBaseAmount(
+    metrics?.okxEarnedRewardsBase,
+    group?.canonicalAsset
+  );
+
+  function selectStrategy(strategyGroupId: string): void {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("strategy", strategyGroupId);
+    router.replace(`/?${params.toString()}`, { scroll: false });
+  }
+
+  const alerts: AlertItem[] = [];
+  if (error) {
+    alerts.push({
+      icon: "error",
+      iconColor: "text-red-500",
+      title: "API Error",
+      description: error,
+    });
+  }
+
+  for (const err of data?.errors ?? []) {
+    alerts.push({
+      icon: "warning",
+      iconColor: "text-orange-500",
+      title: "Exchange Warning",
+      description: err,
+    });
+  }
+
+  for (const warning of metrics?.warnings ?? []) {
+    alerts.push({
+      icon: "info",
+      iconColor: "text-yellow-400",
+      title: "Strategy Warning",
+      description: warning,
+    });
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="relative flex min-h-screen w-full flex-col">
+      <Header />
+
+      <div className="flex flex-1 justify-center px-4 py-6 lg:px-10">
+        <div className="flex w-full max-w-[1400px] flex-col gap-6 lg:flex-row">
+          <div className="flex flex-1 flex-col gap-6">
+            {loading && (
+              <div className="flex items-center justify-center py-20">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <p className="text-sm text-slate-400">Loading live data...</p>
+                </div>
+              </div>
+            )}
+
+            {!loading && group && metrics && (
+              <>
+                {strategyGroups.length > 1 && (
+                  <div className="glass-card p-4">
+                    <div className="flex flex-wrap gap-3">
+                      {strategyGroups.map((strategy) => {
+                        const active = strategy.strategyGroupId === group.strategyGroupId;
+                        return (
+                          <button
+                            key={strategy.strategyGroupId}
+                            type="button"
+                            onClick={() => selectStrategy(strategy.strategyGroupId)}
+                            className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${
+                              active
+                                ? "border-primary bg-primary/15 text-primary"
+                                : "border-white/[0.08] bg-white/[0.02] text-slate-300 hover:border-primary/40 hover:text-white"
+                            }`}
+                          >
+                            {strategy.canonicalAsset}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="lg:hidden">
+                  <HedgeControls
+                    onRefresh={() => refetch(true)}
+                    refreshing={refreshing}
+                    lastRefreshedAt={metrics.lastRefreshedAt ?? data?.lastRefreshedAt ?? null}
+                    compact
+                  />
+                </div>
+
+                <HedgeOverview group={group} metrics={metrics} />
+
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <LegCard
+                    label={`${group.primaryVenueLong?.toUpperCase() ?? "OKX"} Spot / Earn Leg`}
+                    type="Long Spot"
+                    typeBadgeColor="blue"
+                    icon="account_balance"
+                    iconColor="text-primary"
+                    primaryLabel="Asset Balance"
+                    primaryValue={`${group.longBaseQty} ${group.canonicalAsset}`}
+                    details={[
+                      {
+                        label: "Avg Entry",
+                        value: formatPrice(metrics.okxAvgEntry ?? metrics.longAvgEntry),
+                      },
+                      {
+                        label: "Mark Price",
+                        value: formatPrice(metrics.longMarkPrice),
+                        highlight: true,
+                      },
+                      {
+                        label: "Notional Value",
+                        value: formatUsdAmount(
+                          metrics.totalPositionSize
+                            ? (parseFloat(metrics.totalPositionSize) / 2).toFixed(2)
+                            : null
+                        ),
+                      },
+                    ]}
+                    stats={[
+                      {
+                        label: "Earned Rewards",
+                        value: metrics.okxEarnedRewardsQuote
+                          ? `${signedUsd(metrics.okxEarnedRewardsQuote)}${rewardBaseLabel ? ` (${rewardBaseLabel})` : ""}`
+                          : "—",
+                        color:
+                          parseFloat(metrics.okxEarnedRewardsQuote ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
+                        label: "Long PnL",
+                        value: metrics.okxLongPnl ? signedUsd(metrics.okxLongPnl) : "—",
+                        color:
+                          parseFloat(metrics.okxLongPnl ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
+                        label: "Fees",
+                        value: metrics.okxFees ? signedUsd(metrics.okxFees) : "—",
+                        color:
+                          parseFloat(metrics.okxFees ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                    ]}
+                  />
+
+                  <LegCard
+                    label={`${group.primaryVenueShort?.toUpperCase() ?? "Binance"} Short Hedge Leg`}
+                    type="Short Perp"
+                    typeBadgeColor="red"
+                    icon="trending_down"
+                    iconColor="text-red-500"
+                    primaryLabel="Position Size"
+                    primaryValue={`-${group.shortBaseQtyAbs} ${group.canonicalAsset}`}
+                    details={[
+                      {
+                        label: "Avg Entry",
+                        value: formatPrice(metrics.shortAvgEntry),
+                      },
+                      {
+                        label: "Mark Price",
+                        value: formatPrice(metrics.shortMarkPrice),
+                        highlight: true,
+                      },
+                      {
+                        label: "Current Funding",
+                        value: formatFundingRate(
+                          metrics.currentFundingRate,
+                          metrics.fundingIntervalHours
+                        ),
+                      },
+                    ]}
+                    stats={[
+                      {
+                        label: "Funding PnL",
+                        value: metrics.fundingPnl ? signedUsd(metrics.fundingPnl) : "—",
+                        color:
+                          parseFloat(metrics.fundingPnl ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
+                        label: "Fees",
+                        value: metrics.binanceFees ? signedUsd(metrics.binanceFees) : "—",
+                        color:
+                          parseFloat(metrics.binanceFees ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
+                        label: "Liq Price",
+                        value: formatPrice(metrics.shortLiquidationPrice),
+                        color: "red" as const,
+                      },
+                      {
+                        label: "Short PnL",
+                        value: metrics.shortUnrealizedPnl
+                          ? signedUsd(metrics.shortUnrealizedPnl)
+                          : "—",
+                        color:
+                          parseFloat(metrics.shortUnrealizedPnl ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                    ]}
+                  />
+                </div>
+
+                <SpreadChart />
+              </>
+            )}
+
+            {!loading && !group && (
+              <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+                <span className="material-symbols-outlined mb-3 text-4xl">
+                  search_off
+                </span>
+                <p className="text-lg font-medium">No matched hedge strategies found</p>
+                <p className="mt-1 text-sm">
+                  Make sure you have open positions on both OKX and Binance.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex w-full flex-col gap-6 lg:w-80">
+            <div className="hidden lg:block">
+              <HedgeControls
+                onRefresh={() => refetch(true)}
+                refreshing={refreshing}
+                lastRefreshedAt={metrics?.lastRefreshedAt ?? data?.lastRefreshedAt ?? null}
+              />
+            </div>
+            <ActiveAlerts alerts={alerts.length > 0 ? alerts : undefined} />
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
     </div>
+  );
+}
+
+export default function PositionsPage() {
+  return (
+    <Suspense fallback={null}>
+      <PositionsContent />
+    </Suspense>
   );
 }
