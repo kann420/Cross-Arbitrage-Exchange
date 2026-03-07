@@ -53,6 +53,11 @@ function formatBaseAmount(
   })} ${asset}`;
 }
 
+function formatApr(value: string | null | undefined): string {
+  if (!value) return "—";
+  return `${(parseFloat(value) * 100).toFixed(2)}%`;
+}
+
 function formatFundingRate(
   rate: string | null | undefined,
   intervalHours: number | null | undefined
@@ -82,6 +87,7 @@ function PositionsContent() {
     metrics?.okxEarnedRewardsBase,
     group?.canonicalAsset
   );
+  const latestOkxApr = group?.longLegs[0]?.apr ?? null;
 
   function selectStrategy(strategyGroupId: string): void {
     const params = new URLSearchParams(searchParams.toString());
@@ -222,6 +228,14 @@ function PositionsContent() {
                         value: metrics.okxFees ? signedUsd(metrics.okxFees) : "—",
                         color:
                           parseFloat(metrics.okxFees ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
+                        label: "APR",
+                        value: formatApr(latestOkxApr),
+                        color:
+                          parseFloat(latestOkxApr ?? "0") >= 0
                             ? ("green" as const)
                             : ("red" as const),
                       },

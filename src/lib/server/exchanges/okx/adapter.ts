@@ -637,6 +637,9 @@ export class OkxAdapter implements ExchangeAdapter {
     let rewardBase = savingsRow?.earnings
       ? new Decimal(savingsRow.earnings)
       : null;
+    const latestRewardRecord = rewardHistory
+      .slice()
+      .sort((left, right) => toUnixMs(right.ts) - toUnixMs(left.ts))[0] ?? null;
     const rewardHistoryBase = rewardHistory.reduce(
       (sum, row) => sum.plus(new Decimal(row.earnings)),
       new Decimal(0)
@@ -703,7 +706,11 @@ export class OkxAdapter implements ExchangeAdapter {
       entryPrice: normalizeDecimalOrNull(avgEntryUsd),
       markPrice: normalizeDecimalOrNull(markPriceUsd),
       usdValue: normalizeDecimalOrNull(currentValueUsd),
-      apr: savingsRow?.rate ? toDecimalStr(savingsRow.rate) : undefined,
+      apr: latestRewardRecord?.rate
+        ? toDecimalStr(latestRewardRecord.rate)
+        : savingsRow?.rate
+          ? toDecimalStr(savingsRow.rate)
+          : undefined,
       productName:
         earnQty.gt(0) && spotQty.gt(0)
           ? `OKX Spot + Simple Earn ${asset}`
