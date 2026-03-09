@@ -5,6 +5,8 @@ import {
   fetchBinanceFundingIntervalHours,
   fetchBinanceMarkPrice,
   fetchReportingQuoteContext,
+  fetchBinanceSpotPriceAtTs,
+  getQuoteToUsdRate,
 } from "../../market-data";
 import type {
   ExchangeAdapter,
@@ -187,35 +189,100 @@ export class BinanceAdapter implements ExchangeAdapter {
     limit?: number;
   }): Promise<NormalizedEvent[]> {
     try {
-      const income = params?.sinceTs
-        ? await binanceRequest<BinanceIncomeRecord[]>("GET", "/fapi/v1/income", {
-            startTime: String(params.sinceTs),
-            limit: String(params.limit ?? 100),
-          })
-        : await this.fetchIncomeCached(params?.limit ?? 100);
+      const [income, reportingContext] = await Promise.all([
+        params?.sinceTs
+          ? this.fetchIncomeRangeSince(params.sinceTs, params.limit ?? 1000)
+          : this.fetchIncomeCached(params?.limit ?? 100),
+        fetchReportingQuoteContext(this.forceRefresh),
+      ]);
       this.latestRawPayloads.income = income;
 
-      return income.map((row) => {
-        const { base, quote } = parseBinanceSymbol(row.symbol || "");
-        const eventType = mapIncomeType(row.incomeType);
+      const normalized = await Promise.all(
+        income.map(async (row) => {
+          const amount = new Decimal(row.income);
+          const feeAsset = row.asset?.toUpperCase();
+          const { base, quote } = parseBinanceSymbol(row.symbol || "");
+          const eventType = mapIncomeType(row.incomeType);
+          const quoteToUsd = getQuoteToUsdRate(quote, reportingContext);
+          let amountInQuote: Decimal | null = null;
+          let amountInReporting: Decimal | null = null;
+          let conversionSource: string | null = null;
 
-        return {
-          exchange: "binance" as const,
-          eventType,
-          canonicalAsset: base || undefined,
-          baseAsset: base || undefined,
-          quoteAsset: quote || undefined,
-          symbolNative: row.symbol || undefined,
-          amount: toDecimalStr(row.income),
-          feeAsset: row.asset?.toUpperCase(),
-          ts: row.time,
-          metadata: {
-            tranId: row.tranId,
-            incomeType: row.incomeType,
-            info: row.info,
-          },
-        };
-      });
+          if (feeAsset) {
+            if (feeAsset === quote) {
+              amountInQuote = amount;
+              amountInReporting = quoteToUsd ? amount.mul(quoteToUsd) : null;
+              conversionSource = `${quote}_direct`;
+            } else if (feeAsset === reportingContext.reportingQuoteAsset) {
+              amountInReporting = amount;
+              conversionSource = `${reportingContext.reportingQuoteAsset}_direct`;
+            } else {
+              const directToUsd = getQuoteToUsdRate(feeAsset, reportingContext);
+              if (directToUsd) {
+                amountInReporting = amount.mul(directToUsd);
+                conversionSource = `${feeAsset}_direct`;
+              }
+
+              if (
+                !amountInQuote &&
+                quote !== "UNKNOWN" &&
+                feeAsset !== "UNKNOWN"
+              ) {
+                const spotCross = await fetchBinanceSpotPriceAtTs(
+                  `${feeAsset}${quote}`,
+                  row.time,
+                  this.forceRefresh
+                );
+                if (spotCross) {
+                  amountInQuote = amount.mul(spotCross);
+                  amountInReporting = quoteToUsd
+                    ? amountInQuote.mul(quoteToUsd)
+                    : amountInReporting;
+                  conversionSource = `spot_1m_close:${feeAsset}${quote}`;
+                }
+              }
+            }
+          }
+
+          if (eventType === "fee" && amountInReporting === null) {
+            console.warn(
+              `[Binance] Missing fee conversion for ${row.symbol} ${feeAsset ?? "UNKNOWN"} at ${row.time}`
+            );
+          }
+
+          return {
+            exchange: "binance" as const,
+            eventType,
+            canonicalAsset: base || undefined,
+            baseAsset: base || undefined,
+            quoteAsset: quote || undefined,
+            symbolNative: row.symbol || undefined,
+            amount: toDecimalStr(row.income),
+            feeAsset,
+            ts: row.time,
+            metadata: {
+              tranId: row.tranId,
+              incomeType: row.incomeType,
+              info: row.info,
+              amountInQuote: amountInQuote
+                ? toDecimalStr(amountInQuote.toString())
+                : null,
+              amountInReporting: amountInReporting
+                ? toDecimalStr(amountInReporting.toString())
+                : null,
+              reportingQuoteAsset: reportingContext.reportingQuoteAsset,
+              conversionSource,
+            },
+          };
+        })
+      );
+
+      console.log(
+        `[Binance] Normalized ${normalized.length} income events` +
+          (params?.sinceTs ? ` since ${params.sinceTs}` : " from cached window")
+      );
+
+      return normalized;
     } catch (e) {
       console.warn("[Binance] Failed to fetch income:", (e as Error).message);
       return [];
@@ -261,6 +328,61 @@ export class BinanceAdapter implements ExchangeAdapter {
     );
     _incomeCache = { ts: Date.now(), data };
     return data;
+  }
+
+  private async fetchIncomeRangeSince(
+    sinceTs: number,
+    limit: number
+  ): Promise<BinanceIncomeRecord[]> {
+    const pageSize = Math.min(Math.max(limit, 1), 1000);
+    const rows: BinanceIncomeRecord[] = [];
+    const seen = new Set<string>();
+    let cursor = sinceTs;
+
+    for (let page = 0; page < 20; page += 1) {
+      const batch = await binanceRequest<BinanceIncomeRecord[]>(
+        "GET",
+        "/fapi/v1/income",
+        {
+          startTime: String(cursor),
+          limit: String(pageSize),
+        }
+      );
+
+      if (batch.length === 0) {
+        break;
+      }
+
+      let maxTs = cursor;
+      for (const row of batch) {
+        const key = [
+          row.time,
+          row.tranId,
+          row.incomeType,
+          row.asset,
+          row.income,
+          row.symbol,
+        ].join(":");
+        if (!seen.has(key)) {
+          seen.add(key);
+          rows.push(row);
+        }
+        if (row.time > maxTs) {
+          maxTs = row.time;
+        }
+      }
+
+      if (batch.length < pageSize || maxTs <= cursor) {
+        break;
+      }
+      cursor = maxTs + 1;
+    }
+
+    rows.sort((left, right) => left.time - right.time);
+    console.log(
+      `[Binance] Income range fetch since ${sinceTs}: ${rows.length} rows`
+    );
+    return rows;
   }
 }
 

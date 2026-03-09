@@ -224,6 +224,16 @@ function PositionsContent() {
                             : ("red" as const),
                       },
                       {
+                        label: "Sold",
+                        value: metrics.okxLongRealizedPnl
+                          ? signedUsd(metrics.okxLongRealizedPnl)
+                          : "â€”",
+                        color:
+                          parseFloat(metrics.okxLongRealizedPnl ?? "0") >= 0
+                            ? ("green" as const)
+                            : ("red" as const),
+                      },
+                      {
                         label: "Fees",
                         value: metrics.okxFees ? signedUsd(metrics.okxFees) : "—",
                         color:

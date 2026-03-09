@@ -70,7 +70,7 @@ export function LegCard({
 
         <div className="h-px w-full bg-slate-800 my-2" />
 
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(110px,1fr))]">
           {stats.map((stat) => (
             <div key={stat.label}>
               <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">

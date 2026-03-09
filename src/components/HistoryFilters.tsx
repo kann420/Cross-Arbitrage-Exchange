@@ -1,23 +1,45 @@
 "use client";
 
-import { useState } from "react";
-
 const tabs = ["All History", "Position Closures", "Funding/Fees"] as const;
 
-export function HistoryFilters() {
-  const [activeTab, setActiveTab] = useState<string>("All History");
+interface HistoryFiltersProps {
+  activeTab: (typeof tabs)[number];
+  onTabChange: (tab: (typeof tabs)[number]) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  selectedAsset: string;
+  onAssetChange: (value: string) => void;
+  selectedExchange: string;
+  onExchangeChange: (value: string) => void;
+  selectedRange: string;
+  onRangeChange: (value: string) => void;
+  assetOptions: string[];
+}
 
+export function HistoryFilters({
+  activeTab,
+  onTabChange,
+  search,
+  onSearchChange,
+  selectedAsset,
+  onAssetChange,
+  selectedExchange,
+  onExchangeChange,
+  selectedRange,
+  onRangeChange,
+  assetOptions,
+}: HistoryFiltersProps) {
   return (
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 p-5 rounded-xl bg-slate-900 border border-slate-800 shadow-sm">
-      {/* Tabs */}
+    <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-sm sm:flex-row sm:items-center">
       <div className="flex gap-1">
         {tabs.map((tab) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium rounded transition ${
+            type="button"
+            onClick={() => onTabChange(tab)}
+            className={`rounded px-4 py-2 text-sm font-medium transition ${
               activeTab === tab
-                ? "text-primary border-b-2 border-primary"
+                ? "border-b-2 border-primary text-primary"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -26,31 +48,45 @@ export function HistoryFilters() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm">
-          <span className="material-symbols-outlined text-slate-400 text-[18px]">
+        <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm">
+          <span className="material-symbols-outlined text-[18px] text-slate-400">
             search
           </span>
           <input
             type="text"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
             placeholder="Search strategy..."
-            className="bg-transparent outline-none text-slate-200 placeholder:text-slate-500 w-32"
+            className="w-32 bg-transparent text-slate-200 outline-none placeholder:text-slate-500"
           />
         </div>
-        <select className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm text-slate-200 outline-none appearance-none cursor-pointer">
-          <option>All Assets</option>
-          <option>BTC</option>
-          <option>ETH</option>
-          <option>SOL</option>
+        <select
+          value={selectedAsset}
+          onChange={(event) => onAssetChange(event.target.value)}
+          className="cursor-pointer appearance-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none"
+        >
+          <option value="All Assets">All Assets</option>
+          {assetOptions.map((asset) => (
+            <option key={asset} value={asset}>
+              {asset}
+            </option>
+          ))}
         </select>
-        <select className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm text-slate-200 outline-none appearance-none cursor-pointer">
+        <select
+          value={selectedExchange}
+          onChange={(event) => onExchangeChange(event.target.value)}
+          className="cursor-pointer appearance-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none"
+        >
           <option>All Exchanges</option>
-          <option>Binance</option>
           <option>OKX</option>
-          <option>Kraken</option>
+          <option>Binance</option>
         </select>
-        <select className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm text-slate-200 outline-none appearance-none cursor-pointer">
+        <select
+          value={selectedRange}
+          onChange={(event) => onRangeChange(event.target.value)}
+          className="cursor-pointer appearance-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none"
+        >
           <option>Last 30 Days</option>
           <option>Last 7 Days</option>
           <option>Last 90 Days</option>

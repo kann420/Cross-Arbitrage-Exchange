@@ -3,6 +3,7 @@ import { toUnixMs } from "./exchanges/utils";
 
 const OKX_PUBLIC_BASE = "https://www.okx.com";
 const BINANCE_FAPI_BASE = "https://fapi.binance.com";
+const BINANCE_SPOT_BASE = "https://api.binance.com";
 const PRICE_TTL_MS = 30_000;
 const FUNDING_INTERVAL_TTL_MS = 60 * 60 * 1000;
 const INSTRUMENT_TTL_MS = 60 * 60 * 1000;
@@ -44,6 +45,16 @@ interface BinanceFundingRateRecord {
   fundingRate: string;
   markPrice: string;
 }
+
+type BinanceSpotKline = [
+  number,
+  string,
+  string,
+  string,
+  string,
+  string,
+  ...unknown[],
+];
 
 export interface ReportingQuoteContext {
   reportingQuoteAsset: "USD";
@@ -90,6 +101,14 @@ const _binanceFundingIntervalCache = new Map<
   }
 >();
 
+const _binanceSpotPriceAtTsCache = new Map<
+  string,
+  {
+    ts: number;
+    data: string | null;
+  }
+>();
+
 async function okxPublicRequest<T>(
   path: string,
   params?: Record<string, string>
@@ -122,9 +141,11 @@ async function okxPublicRequest<T>(
 
 async function binancePublicRequest<T>(
   path: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
+  base: "fapi" | "spot" = "fapi"
 ): Promise<T> {
-  const url = new URL(`${BINANCE_FAPI_BASE}${path}`);
+  const baseUrl = base === "spot" ? BINANCE_SPOT_BASE : BINANCE_FAPI_BASE;
+  const url = new URL(`${baseUrl}${path}`);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, value);
@@ -247,6 +268,42 @@ export async function fetchBinanceFundingIntervalHours(
     return intervalHours;
   } catch {
     _binanceFundingIntervalCache.set(symbol, { ts: now, data: null });
+    return null;
+  }
+}
+
+export async function fetchBinanceSpotPriceAtTs(
+  symbol: string,
+  ts: number,
+  forceRefresh = false
+): Promise<string | null> {
+  const minuteBucket = Math.floor(ts / 60_000) * 60_000;
+  const key = `${symbol}:${minuteBucket}`;
+  const now = Date.now();
+  const cached = _binanceSpotPriceAtTsCache.get(key);
+
+  // Historical minute candles are immutable, so keep them cached for a long time.
+  if (!forceRefresh && cached && now - cached.ts < 24 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const data = await binancePublicRequest<BinanceSpotKline[]>(
+      "/api/v3/klines",
+      {
+        symbol,
+        interval: "1m",
+        startTime: String(minuteBucket),
+        endTime: String(minuteBucket + 59_999),
+        limit: "1",
+      },
+      "spot"
+    );
+    const close = data[0]?.[4] ?? null;
+    _binanceSpotPriceAtTsCache.set(key, { ts: now, data: close });
+    return close;
+  } catch {
+    _binanceSpotPriceAtTsCache.set(key, { ts: now, data: null });
     return null;
   }
 }

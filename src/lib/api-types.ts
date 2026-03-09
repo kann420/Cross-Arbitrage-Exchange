@@ -34,6 +34,17 @@ export interface HealthApiResponse {
   ts: number;
 }
 
+export interface HistoryApiResponse {
+  stats: {
+    totalRealizedPnl: string | null;
+    completedArbitrages: number;
+    avgStrategyDurationMs: number | null;
+  };
+  entries: HistoryEntryClient[];
+  errors: string[];
+  fetchedAt: number;
+}
+
 // ─── Client-side sub-types ───────────────────────────────
 
 export interface HoldingClient {
@@ -147,6 +158,7 @@ export interface DashboardMetricClient {
   okxEarnedRewardsBase: string | null;
   okxEarnedRewardsQuote: string | null;
   okxLongPnl: string | null;
+  okxLongRealizedPnl: string | null;
   okxFees: string | null;
   binanceFees: string | null;
   fundingPnl: string | null;
@@ -203,5 +215,34 @@ export interface StrategyRow {
   netApy: string | null;
   hedgeRatio: string | null;
   crossQuote: boolean;
+  warnings: string[];
+}
+
+export interface HistoryLegClient {
+  exchange: string;
+  side: "long" | "short";
+  entryPrice: string | null;
+  exitPrice: string | null;
+  size: string | null;
+}
+
+export interface HistoryEntryClient {
+  historyEntryId: string;
+  strategyGroupId: string;
+  canonicalAsset: string;
+  strategyName: string;
+  entryType: "closure";
+  status: "Settled";
+  openedAtMs: number;
+  closedAtMs: number;
+  durationMs: number;
+  realizedSpreadPercent: string | null;
+  finalPnl: string | null;
+  pnlPositive: boolean;
+  legs: Array<{ label: string; side: "long" | "short" }>;
+  details: {
+    spotLeg: HistoryLegClient;
+    perpLeg: HistoryLegClient;
+  };
   warnings: string[];
 }

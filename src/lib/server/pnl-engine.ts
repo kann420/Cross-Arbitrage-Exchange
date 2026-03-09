@@ -121,6 +121,7 @@ export interface HedgeDashboardMetrics {
   okxEarnedRewardsBase: string | null;
   okxEarnedRewardsQuote: string | null;
   okxLongPnl: string | null;
+  okxLongRealizedPnl: string | null;
   okxFees: string | null;
   binanceFees: string | null;
   fundingPnl: string | null;
@@ -192,6 +193,48 @@ function sumKnown(values: Array<Decimal | null>): Decimal | null {
   const known = values.filter((value): value is Decimal => value !== null);
   if (known.length === 0) return null;
   return known.reduce((sum, value) => sum.plus(value), new Decimal(0));
+}
+
+function decimalFromEventMetadata(
+  event: NormalizedEvent,
+  key: string
+): Decimal | null {
+  const value = event.metadata?.[key];
+  return typeof value === "string" && value !== "" ? new Decimal(value) : null;
+}
+
+function eventAmountInReporting(
+  event: NormalizedEvent,
+  quoteToReportingRate: Decimal | null
+): Decimal | null {
+  const converted = decimalFromEventMetadata(event, "amountInReporting");
+  if (converted) {
+    return converted;
+  }
+
+  const amount = new Decimal(event.amount);
+  const eventAsset = event.feeAsset?.toUpperCase();
+  if (eventAsset === "USD") {
+    return amount;
+  }
+  if (
+    quoteToReportingRate &&
+    eventAsset &&
+    event.quoteAsset &&
+    eventAsset === event.quoteAsset.toUpperCase()
+  ) {
+    return amount.mul(quoteToReportingRate);
+  }
+
+  if (
+    eventAsset &&
+    event.quoteAsset &&
+    eventAsset !== event.quoteAsset.toUpperCase()
+  ) {
+    return null;
+  }
+
+  return quoteToReportingRate ? amount.mul(quoteToReportingRate) : null;
 }
 
 function aggregateLongLegs(longLegs: NormalizedHolding[]): AggregatedLongContext {
@@ -344,21 +387,45 @@ function aggregateShortLegs(
     return false;
   });
 
-  const rawFunding = relevantEvents
+  for (const event of relevantEvents) {
+    const needsReportingValue =
+      event.eventType === "funding_fee" ||
+      event.eventType === "fee" ||
+      (event.eventType === "trade_fill" &&
+        String(event.metadata?.incomeType ?? "").toUpperCase() === "REALIZED_PNL");
+    if (!needsReportingValue) continue;
+
+    if (eventAmountInReporting(event, quoteToReportingRate) === null) {
+      warnings.push(
+        `Missing reporting conversion for Binance ${event.eventType} ${event.symbolNative ?? "unknown"} at ${event.ts}.`
+      );
+    }
+  }
+
+  const fundingUsd = relevantEvents
     .filter((event) => event.eventType === "funding_fee")
-    .reduce((sum, event) => sum.plus(new Decimal(event.amount)), new Decimal(0));
+    .reduce((sum, event) => {
+      const converted = eventAmountInReporting(event, quoteToReportingRate);
+      return converted ? sum.plus(converted) : sum;
+    }, new Decimal(0));
 
-  const rawFees = relevantEvents
+  const feesUsd = relevantEvents
     .filter((event) => event.eventType === "fee")
-    .reduce((sum, event) => sum.plus(new Decimal(event.amount)), new Decimal(0));
+    .reduce((sum, event) => {
+      const converted = eventAmountInReporting(event, quoteToReportingRate);
+      return converted ? sum.plus(converted) : sum;
+    }, new Decimal(0));
 
-  const rawRealizedEvents = relevantEvents
+  const realizedEventsUsd = relevantEvents
     .filter(
       (event) =>
         event.eventType === "trade_fill" &&
         String(event.metadata?.incomeType ?? "").toUpperCase() === "REALIZED_PNL"
     )
-    .reduce((sum, event) => sum.plus(new Decimal(event.amount)), new Decimal(0));
+    .reduce((sum, event) => {
+      const converted = eventAmountInReporting(event, quoteToReportingRate);
+      return converted ? sum.plus(converted) : sum;
+    }, new Decimal(0));
 
   const avgEntry = qtyAbs.gt(0) && entryCost.gt(0) ? entryCost.div(qtyAbs) : null;
   const markPrice = qtyAbs.gt(0) && markValue.gt(0) ? markValue.div(qtyAbs) : null;
@@ -370,13 +437,18 @@ function aggregateShortLegs(
     markPrice,
     unrealizedUsd:
       quoteToReportingRate ? rawUnrealized.mul(quoteToReportingRate) : null,
-    realizedUsd: quoteToReportingRate
-      ? (rawPositionRealized.abs().gt(0) ? rawPositionRealized : rawRealizedEvents).mul(
-          quoteToReportingRate
-        )
-      : null,
-    fundingUsd: quoteToReportingRate ? rawFunding.mul(quoteToReportingRate) : null,
-    feesUsd: quoteToReportingRate ? rawFees.mul(quoteToReportingRate) : null,
+    realizedUsd:
+      rawPositionRealized.abs().gt(0) && quoteToReportingRate
+        ? rawPositionRealized.mul(quoteToReportingRate)
+        : realizedEventsUsd,
+    fundingUsd:
+      relevantEvents.some((event) => event.eventType === "funding_fee")
+        ? fundingUsd
+        : null,
+    feesUsd:
+      relevantEvents.some((event) => event.eventType === "fee")
+        ? feesUsd
+        : null,
     currentValueUsd:
       currentValueRaw && quoteToReportingRate
         ? currentValueRaw.mul(quoteToReportingRate)
@@ -678,6 +750,7 @@ export function buildDashboardMetrics(
     okxEarnedRewardsBase: pnl.summary.okxEarnedRewardsBase,
     okxEarnedRewardsQuote: pnl.summary.okxEarnedRewardsQuote,
     okxLongPnl: pnl.summary.okxLongPnl,
+    okxLongRealizedPnl: pnl.summary.okxLongRealizedPnl,
     okxFees: pnl.summary.okxFees,
     binanceFees: pnl.summary.binanceFees,
     fundingPnl: pnl.summary.fundingPnl,

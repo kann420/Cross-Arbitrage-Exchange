@@ -63,7 +63,6 @@ export async function fetchAndComputeAll(
     okxEvents,
     binanceBalances,
     binancePositions,
-    binanceEvents,
   ] = await Promise.all([
     okx.getBalances().catch((e: Error) => {
       errors.push(`OKX balances: ${e.message}`);
@@ -89,16 +88,11 @@ export async function fetchAndComputeAll(
       errors.push(`Binance positions: ${e.message}`);
       return [] as NormalizedPosition[];
     }),
-    binance.getRecentEvents({ limit: 100 }).catch((e: Error) => {
-      errors.push(`Binance events: ${e.message}`);
-      return [] as NormalizedEvent[];
-    }),
   ]);
 
   const allBalances = [...okxBalances, ...binanceBalances];
   const allHoldings = [...okxHoldings];
   const allPositions = [...okxPositions, ...binancePositions];
-  const allEvents = [...okxEvents, ...binanceEvents];
   const reportingContext = await fetchReportingQuoteContext(forceRefresh).catch(
     (e: Error) => {
       errors.push(`Reporting FX context: ${e.message}`);
@@ -109,6 +103,28 @@ export async function fetchAndComputeAll(
   // Match positions into strategy groups
   const { groups, unmatchedHoldings, unmatchedPositions } =
     matchHedgePositions(allHoldings, allPositions);
+
+  const earliestStrategyOpenedAtMs =
+    groups.length > 0
+      ? (() => {
+          const openedAtValues = groups
+            .map((group) => group.openedAtMs)
+            .filter((value): value is number => value !== null);
+          return openedAtValues.length > 0 ? Math.min(...openedAtValues) : null;
+        })()
+      : null;
+
+  const binanceEvents = await binance
+    .getRecentEvents(
+      earliestStrategyOpenedAtMs
+        ? { sinceTs: earliestStrategyOpenedAtMs, limit: 1000 }
+        : { limit: 100 }
+    )
+    .catch((e: Error) => {
+      errors.push(`Binance events: ${e.message}`);
+      return [] as NormalizedEvent[];
+    });
+  const allEvents = [...okxEvents, ...binanceEvents];
 
   // Compute PnL for each group
   const pnlBreakdowns: HedgePnlBreakdown[] = [];
